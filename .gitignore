@@ -1,6 +1,7 @@
 # Results and experiment outputs
 results/
 wandb/
+paper/
 
 # Python
 __pycache__/
