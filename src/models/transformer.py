@@ -3,6 +3,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
+class PositionalEncoding(nn.Module):
+    """Sinusoidal positional encoding, batch‑first."""
+    def __init__(self, d_model: int, max_len: int = 10000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Accepts (B, L, D) or (L, D)
+        if x.dim() == 2:
+            # (L, D) -> (1, L, D)
+            x = x.unsqueeze(0)
+        if x.dim() != 3:
+            raise ValueError(f"Input to PositionalEncoding must be 3D, got shape {x.shape}")
+        if x.size(1) <= self.pe.size(1):
+            # batch_first: (B, L, d_model)
+            x = x + self.pe[:, :x.size(1), :]
+        else:
+            raise ValueError(f"Input sequence length {x.size(1)} exceeds maximum positional encoding length {self.pe.size(1)}.")
+        return x
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, nhead, dropout=0.1):
         super().__init__()
@@ -17,31 +43,21 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, query, key, value, mask=None):
-        # Asegura que la entrada tenga 3 dimensiones (B, L, d_model)
-        added_batch = False
-        if query.dim() == 2:
-            query = query.unsqueeze(0)
-            key = key.unsqueeze(0)
-            value = value.unsqueeze(0)
-            added_batch = True
+        # query/key/value: (B, L, D)
         B, Lq, _ = query.size()
-        B, Lk, _ = key.size()
-        # Linear projections
-        Q = self.q_linear(query).view(B, Lq, self.nhead, self.d_k).transpose(1, 2)  # (B, nhead, Lq, d_k)
+        _, Lk, _ = key.size()
+        Q = self.q_linear(query).view(B, Lq, self.nhead, self.d_k).transpose(1, 2)
         K = self.k_linear(key).view(B, Lk, self.nhead, self.d_k).transpose(1, 2)
         V = self.v_linear(value).view(B, Lk, self.nhead, self.d_k).transpose(1, 2)
-        # Scaled dot-product attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)  # (B, nhead, Lq, Lk)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
         if mask is not None:
+            # mask: (B, 1, 1, Lk) or broadcastable
             scores = scores.masked_fill(mask == 0, float('-inf'))
         attn = F.softmax(scores, dim=-1)
         attn = self.dropout(attn)
-        context = torch.matmul(attn, V)  # (B, nhead, Lq, d_k)
+        context = torch.matmul(attn, V)
         context = context.transpose(1, 2).contiguous().view(B, Lq, self.d_model)
-        out = self.out_proj(context)
-        if added_batch:
-            out = out.squeeze(0)
-        return out
+        return self.out_proj(context)
 
 class FeedForward(nn.Module):
     def __init__(self, d_model, dim_feedforward, dropout=0.1, activation="relu"):
@@ -64,18 +80,11 @@ class EncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.dropout2 = nn.Dropout(dropout)
 
-    def forward(self, src, src_mask=None, src_key_padding_mask=None):
-        # src: (B, S, d_model)
-        attn_mask = src_mask
-        if src_key_padding_mask is not None:
-            # src_key_padding_mask: (B, S) -> (B, 1, 1, S)
-            attn_mask = src_key_padding_mask.unsqueeze(1).unsqueeze(2)
-        src2 = self.self_attn(src, src, src, attn_mask)
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
+    def forward(self, src, src_mask=None):
+        src2 = self.self_attn(src, src, src, src_mask)
+        src = self.norm1(src + self.dropout1(src2))
         src2 = self.ff(src)
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
+        src = self.norm2(src + self.dropout2(src2))
         return src
 
 class DecoderLayer(nn.Module):
@@ -91,22 +100,13 @@ class DecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
 
-    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None):
-        attn_mask = tgt_mask
-        if tgt_key_padding_mask is not None:
-            attn_mask = tgt_key_padding_mask.unsqueeze(1).unsqueeze(2)
-        tgt2 = self.self_attn(tgt, tgt, tgt, attn_mask)
-        tgt = tgt + self.dropout1(tgt2)
-        tgt = self.norm1(tgt)
-        cross_mask = memory_mask
-        if memory_key_padding_mask is not None:
-            cross_mask = memory_key_padding_mask.unsqueeze(1).unsqueeze(2)
-        tgt2 = self.cross_attn(tgt, memory, memory, cross_mask)
-        tgt = tgt + self.dropout2(tgt2)
-        tgt = self.norm2(tgt)
+    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None):
+        tgt2 = self.self_attn(tgt, tgt, tgt, tgt_mask)
+        tgt = self.norm1(tgt + self.dropout1(tgt2))
+        tgt2 = self.cross_attn(tgt, memory, memory, memory_mask)
+        tgt = self.norm2(tgt + self.dropout2(tgt2))
         tgt2 = self.ff(tgt)
-        tgt = tgt + self.dropout3(tgt2)
-        tgt = self.norm3(tgt)
+        tgt = self.norm3(tgt + self.dropout3(tgt2))
         return tgt
 
 class Encoder(nn.Module):
@@ -118,9 +118,11 @@ class Encoder(nn.Module):
         ])
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+    def forward(self, src, src_mask=None):
+        if src.dim() == 2:
+            src = src.unsqueeze(0)
         for layer in self.layers:
-            src = layer(src, src_mask, src_key_padding_mask)
+            src = layer(src, src_mask)
         return self.norm(src)
 
 class Decoder(nn.Module):
@@ -132,41 +134,20 @@ class Decoder(nn.Module):
         ])
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None):
+    def forward(self, tgt, memory, tgt_mask=None, memory_mask=None):
+        if tgt.dim() == 2:
+            tgt = tgt.unsqueeze(0)
+        if memory.dim() == 2:
+            memory = memory.unsqueeze(0)
         for layer in self.layers:
-            tgt = layer(tgt, memory, tgt_mask, memory_mask, tgt_key_padding_mask, memory_key_padding_mask)
+            tgt = layer(tgt, memory, tgt_mask, memory_mask)
         return self.norm(tgt)
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000, dropout=0.1):
-        super().__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        self.max_len = max_len
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        # x: (B, L, d_model) or (L, B, d_model)
-        if x.dim() != 3:
-            raise ValueError(f"Input to PositionalEncoding must be 3D, got shape {x.shape}")
-        if x.size(1) <= self.max_len:
-            # batch_first: (B, L, d_model)
-            x = x + self.pe[:, :x.size(1), :]
-        elif x.size(0) <= self.max_len:
-            # not batch_first: (L, B, d_model)
-            x = x + self.pe[:, :x.size(0), :].transpose(0, 1)
-        else:
-            raise ValueError(f"Input sequence length {x.size(1)} or {x.size(0)} exceeds maximum positional encoding length {self.max_len}.")
-        return self.dropout(x)
-
+    
 class StandardTransformer(nn.Module):
+    """Implementation that follows the theoretical pipeline in the pseudocode."""
     def __init__(
         self,
+        vocab_size: int = 32000,
         d_model: int = 512,
         nhead: int = 8,
         num_encoder_layers: int = 6,
@@ -174,62 +155,75 @@ class StandardTransformer(nn.Module):
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
         activation: str = "relu",
-        batch_first: bool = True,
-        vocab_size: int = 1000,
-        max_len: int = 5000,
+        latent_dim: int = 256,
+        max_len: int = 4096,
     ):
         super().__init__()
-        self.src_embedding = nn.Embedding(vocab_size, d_model)
-        self.tgt_embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoder = PositionalEncoding(d_model, max_len=max_len, dropout=dropout)
-        self.pos_decoder = PositionalEncoding(d_model, max_len=max_len, dropout=dropout)
-        self.encoder = Encoder(d_model, nhead, num_encoder_layers, dim_feedforward, dropout, activation)
-        self.decoder = Decoder(d_model, nhead, num_decoder_layers, dim_feedforward, dropout, activation)
-        self.output_projection = nn.Linear(d_model, vocab_size)
         self.d_model = d_model
-        self.batch_first = batch_first
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, max_len)
+        self.encoder_layer = Encoder(d_model, nhead, num_encoder_layers, dim_feedforward, dropout, activation)
+        self.decoder = Decoder(d_model, nhead, num_decoder_layers, dim_feedforward, dropout, activation)
+        self.pos_decoder = PositionalEncoding(d_model, max_len)
+        self.output_proj = nn.Linear(d_model, vocab_size)
 
-    def forward(
-        self,
-        src: torch.Tensor,
-        tgt: torch.Tensor,
-        src_mask: Optional[torch.Tensor] = None,
-        tgt_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None,
-        src_key_padding_mask: Optional[torch.Tensor] = None,
-        tgt_key_padding_mask: Optional[torch.Tensor] = None,
-        memory_key_padding_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        src = self.src_embedding(src) * (self.d_model ** 0.5)
-        tgt = self.tgt_embedding(tgt) * (self.d_model ** 0.5)
-        # Asegura que src y tgt sean 3D (batch, seq_len, d_model)
-        if src.dim() == 2:
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        # 1) Asegura batch-first
+        src = self._ensure_batch_first(src)
+        tgt = self._ensure_batch_first(tgt)
+
+        # 2) Embedding solo si son índices
+        src_embed = self._maybe_embed(src)          # (B, L, D)
+        tgt_embed = self._maybe_embed(tgt)          # (B, L, D)
+
+        # 3) Positional encodings
+        src_embed = self.pos_encoder(src_embed)
+        tgt_embed = self.pos_decoder(tgt_embed)
+
+        # 4) Encoder → Decoder
+        memory = self.encoder_layer(src_embed)      # (B, L, D)
+        dec_out = self.decoder(tgt_embed, memory)   # (B, L, D)
+
+        # 5) Logits
+        return self.output_proj(dec_out)            # (B, L, vocab)
+
+    def encode(self, src):
+        # src: (L,) or (B, L) of token indices (LongTensor)
+        if src.dim() == 1:
             src = src.unsqueeze(0)
-        if tgt.dim() == 2:
-            tgt = tgt.unsqueeze(0)
-        src = self.pos_encoder(src)
-        tgt = self.pos_decoder(tgt)
-        memory = self.encoder(src, src_mask, src_key_padding_mask)
-        output = self.decoder(tgt, memory, tgt_mask, memory_mask, tgt_key_padding_mask, memory_key_padding_mask)
-        return self.output_projection(output)
+        if not torch.is_floating_point(src):
+            src_embed = self.embedding(src)  # (B, L, D)
+            src_embed = self.pos_encoder(src_embed)
+        else:
+            src_embed = src  # already embedded
+        v = self.encoder_layer(src_embed)  # (B, L, D)
+        return v
 
-    def encode(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        src = self.src_embedding(src) * (self.d_model ** 0.5)
-        if src.dim() == 2:
-            src = src.unsqueeze(0)
-        src = self.pos_encoder(src)
-        return self.encoder(src, src_mask)
-
-    def decode(
-        self,
-        tgt: torch.Tensor,
-        memory: torch.Tensor,
-        tgt_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        tgt = self.tgt_embedding(tgt) * (self.d_model ** 0.5)
-        if tgt.dim() == 2:
+    def decode(self, tgt, memory):
+        # tgt: (L,) o (B, L) de índices de tokens (LongTensor)
+        if tgt.dim() == 1:
             tgt = tgt.unsqueeze(0)
-        tgt = self.pos_decoder(tgt)
-        output = self.decoder(tgt, memory, tgt_mask, memory_mask)
-        return self.output_projection(output) 
+        if not torch.is_floating_point(tgt):
+            tgt_embed = self.embedding(tgt)
+            tgt_embed = self.pos_decoder(tgt_embed)
+        else:
+            tgt_embed = tgt
+        if memory.dim() == 2:
+            memory = memory.unsqueeze(0)
+        dec_out = self.decoder(tgt_embed, memory)
+        return self.output_proj(dec_out)
+    
+        # ─── utilidades internas ─────────────────────────────────────────────
+    def _ensure_batch_first(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Garantiza que x tenga forma (B, L) [long] o (B, L, D) [float].
+        - (L,)    → (1, L)
+        """
+        return x.unsqueeze(0) if x.dim() == 1 else x
+
+    def _maybe_embed(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Si x es Long → aplica embedding;  
+        Si x es float (ya embeddeado) → se devuelve tal cual.
+        """
+        return self.embedding(x) if x.dtype == torch.long else x

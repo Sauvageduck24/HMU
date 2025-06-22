@@ -169,6 +169,7 @@ class HMU(nn.Module):
         super().__init__()
         self.vae = VAE(d_model, latent_dim)
         self.norm = nn.LayerNorm(d_model*2)
+        self.norm_output = nn.LayerNorm(d_model)
         self.mlp = nn.Sequential(
             nn.Linear(d_model + d_model, d_model * 2),
             nn.GELU(),
@@ -177,8 +178,68 @@ class HMU(nn.Module):
 
     def forward(self, v: torch.Tensor) -> torch.Tensor:
         v_auto = self.vae(v)
-        fused = self.norm(torch.cat([v, v_auto], dim=-1))
-        return self.mlp(fused)
+        fused = torch.cat([v, v_auto], dim=-1)
+        fused = self.norm(fused)
+        fused = self.mlp(fused)
+
+        #add & norm fused
+        fused = fused + v
+        fused = self.norm_output(fused)
+
+        return fused
+    
+class HMU_mod(nn.Module):
+    """
+    Hyper-Memory Unit con fusión por gating.
+    Mezcla la salida del encoder con una versión comprimida (via VAE)
+    usando un gating aprendido dinámicamente.
+    """
+    def __init__(self, d_model: int, latent_dim: int):
+        super().__init__()
+        self.vae = VAE(d_model, latent_dim)
+
+        # Normaliza el input original y el latente reconstruido
+        self.norm_input = nn.LayerNorm(d_model)
+        self.norm_latent = nn.LayerNorm(d_model)
+
+        # Gating para decidir cuánto usar de cada representación
+        self.gate_mlp = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.Sigmoid()
+        )
+
+        # Proyección final tras fusión
+        self.fusion_proj = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.GELU(),
+            nn.LayerNorm(d_model)  # Prepara para decoder
+        )
+
+    def forward(self, v: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            v (Tensor): Salida del encoder (batch, seq_len, d_model)
+        Returns:
+            Tensor: Representación enriquecida para el decoder
+        """
+        # VAE reconstruction
+        v_latent = self.vae(v)  # (batch, seq_len, d_model)
+
+        # Normalizar ambas representaciones
+        v_norm = self.norm_input(v)
+        v_latent_norm = self.norm_latent(v_latent)
+
+        # Gating: decide cuánto confiar en cada parte
+        gate_input = torch.cat([v_norm, v_latent_norm], dim=-1)  # (batch, seq_len, 2*d_model)
+        gate = self.gate_mlp(gate_input)  # (batch, seq_len, d_model), valores entre 0 y 1
+
+        # Fusión adaptativa
+        fused = gate * v_norm + (1 - gate) * v_latent_norm
+
+        # Proyección final
+        output = self.fusion_proj(fused)  # (batch, seq_len, d_model)
+        return output
+
 
 class HMUTransformer(nn.Module):
     """Implementation that follows the theoretical pipeline in the pseudocode."""
@@ -236,6 +297,7 @@ class HMUTransformer(nn.Module):
         else:
             src_embed = src  # already embedded
         v = self.encoder_layer(src_embed)  # (B, L, D)
+        v = self.hmu(v)  # Apply HMU to get enriched representation
         return v
 
     def decode(self, tgt, memory):
@@ -323,6 +385,7 @@ class HMUTransformerAfterDecoder(nn.Module):
         else:
             src_embed = src  # already embedded
         v = self.encoder_layer(src_embed)  # (B, L, D)
+        v = self.hmu(v)  # Apply HMU to get enriched representation
         return v
 
     def decode(self, tgt, memory):
