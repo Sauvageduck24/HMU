@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Test script for GLUE mode functionality
+Test script for GLUE mode functionality.
+Runs both comprehensive and individual dataset tests for the GLUE benchmark.
 """
 
 import subprocess
@@ -8,11 +9,13 @@ import sys
 import os
 
 def test_glue_mode():
-    """Test the new GLUE mode functionality"""
+    """
+    Test the new GLUE mode functionality by running the main experiment script with GLUE mode enabled.
+    Checks for successful run and output files.
+    """
     print("=" * 60)
     print("TESTING GLUE MODE")
     print("=" * 60)
-    
     # Test with a small number of epochs to verify functionality
     cmd = [
         sys.executable, "run_experiments.py",
@@ -22,44 +25,35 @@ def test_glue_mode():
         "--batch_size", "8",  # Small batch size for testing
         "--d_model", "128"  # Smaller model for faster testing
     ]
-    
     print("Running command:")
     print(" ".join(cmd))
     print("\n" + "="*60)
-    
     try:
-        # Run the command
+        # Run the command and capture output
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
-        
         print("STDOUT:")
         print(result.stdout)
-        
         if result.stderr:
             print("\nSTDERR:")
             print(result.stderr)
-        
         if result.returncode == 0:
             print("\n" + "="*60)
             print("✓ GLUE MODE TEST PASSED!")
             print("="*60)
-            
             # Check if results files were created
             expected_files = [
                 "results/glue_comprehensive_results.csv",
                 "results/glue_dataset_summary.csv"
             ]
-            
             for file_path in expected_files:
                 if os.path.exists(file_path):
                     print(f"✓ {file_path} created successfully")
                 else:
                     print(f"✗ {file_path} not found")
-            
             return True
         else:
             print(f"\n✗ GLUE MODE TEST FAILED! Return code: {result.returncode}")
             return False
-            
     except subprocess.TimeoutExpired:
         print("\n✗ GLUE MODE TEST TIMED OUT!")
         return False
@@ -68,16 +62,16 @@ def test_glue_mode():
         return False
 
 def test_individual_glue_datasets():
-    """Test individual GLUE datasets"""
+    """
+    Test individual GLUE datasets by running the main experiment script for each dataset.
+    Checks for successful run for each dataset.
+    """
     print("\n" + "=" * 60)
     print("TESTING INDIVIDUAL GLUE DATASETS")
     print("=" * 60)
-    
     datasets = ["mrpc", "rte", "cola", "qnli"]
-    
     for dataset in datasets:
         print(f"\nTesting {dataset.upper()}...")
-        
         cmd = [
             sys.executable, "run_experiments.py",
             "--dataset", dataset,
@@ -86,16 +80,13 @@ def test_individual_glue_datasets():
             "--batch_size", "8",
             "--d_model", "128"
         ]
-        
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            
             if result.returncode == 0:
                 print(f"✓ {dataset.upper()} test passed")
             else:
                 print(f"✗ {dataset.upper()} test failed")
                 print(f"Error: {result.stderr}")
-                
         except subprocess.TimeoutExpired:
             print(f"✗ {dataset.upper()} test timed out")
         except Exception as e:
@@ -104,13 +95,10 @@ def test_individual_glue_datasets():
 if __name__ == "__main__":
     print("GLUE MODE FUNCTIONALITY TEST")
     print("=" * 60)
-    
     # Test individual datasets first
     test_individual_glue_datasets()
-    
     # Test the comprehensive GLUE mode
     success = test_glue_mode()
-    
     if success:
         print("\n" + "=" * 60)
         print("SUMMARY")

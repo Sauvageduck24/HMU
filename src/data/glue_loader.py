@@ -28,7 +28,7 @@ class GLUELoader:
         self.tokenizer_name = tokenizer_name
         self.max_samples = max_samples
         
-        # Dataset configurations
+        # Dataset configurations for each GLUE task
         self.dataset_configs = {
             "mrpc": {
                 "hf_name": "glue",
@@ -80,6 +80,7 @@ class GLUELoader:
             }
         }
         
+        # Check if the dataset is supported
         if self.dataset_name not in self.dataset_configs:
             raise ValueError(f"Dataset {dataset_name} not supported. Available: {list(self.dataset_configs.keys())}")
         
@@ -88,7 +89,7 @@ class GLUELoader:
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token = self.tokenizer.eos_token  # Ensure pad token exists
         
         # Load data
         self.data = self._load_glue_data()
@@ -116,7 +117,7 @@ class GLUELoader:
             split=actual_split
         )
         
-        # Limit samples if specified
+        # Limit samples if specified by user or default config
         if self.max_samples is not None:
             dataset = dataset.select(range(min(self.max_samples, len(dataset))))
             print(f"Limited to {len(dataset)} samples")
@@ -129,7 +130,7 @@ class GLUELoader:
         
         # Process all samples with progress bar
         for idx, example in tqdm(enumerate(dataset), total=len(dataset), desc="Processing samples"):
-            # Handle different dataset formats
+            # Handle different dataset formats for each GLUE task
             if self.dataset_name == "mrpc":
                 sentence1 = example['sentence1']
                 sentence2 = example['sentence2']
@@ -163,7 +164,7 @@ class GLUELoader:
             else:
                 raise ValueError(f"Unknown dataset: {self.dataset_name}")
             
-            # Tokenize
+            # Tokenize the input text with padding and truncation
             encoding = self.tokenizer(
                 text,
                 truncation=True,
@@ -172,10 +173,10 @@ class GLUELoader:
                 return_tensors='pt'
             )
             
-            # Create sample
+            # Create sample dictionary with input and label tensors
             sample = {
-                'src': encoding['input_ids'].squeeze(0),
-                'tgt': torch.tensor(label, dtype=torch.long)
+                'src': encoding['input_ids'].squeeze(0),  # Input tensor
+                'tgt': torch.tensor(label, dtype=torch.long)  # Target label tensor
             }
             data.append(sample)
         

@@ -7,6 +7,10 @@ import wandb
 import torch
 
 class ResultsVisualizer:
+    """
+    Provides visualization and logging utilities for model evaluation results.
+    Supports plotting, summary tables, and Weights & Biases integration.
+    """
     def __init__(self, use_wandb: bool = True):
         """Initialize the visualizer.
         
@@ -23,7 +27,9 @@ class ResultsVisualizer:
         htransformer_results: Dict[str, float],
         save_path: str = None
     ):
-        """Plot memory retention comparison."""
+        """
+        Plot memory retention comparison between models over time steps.
+        """
         time_steps = [int(k.split('_')[1]) for k in standard_results.keys() if k.startswith('retention_')]
         standard_retentions = [standard_results[f'retention_{t}'] for t in time_steps]
         htransformer_retentions = [htransformer_results[f'retention_{t}'] for t in time_steps]
@@ -51,7 +57,9 @@ class ResultsVisualizer:
         htransformer_results: Dict[str, float],
         save_path: str = None
     ):
-        """Plot imagination quality metrics comparison."""
+        """
+        Plot imagination quality metrics comparison between models.
+        """
         metrics = ['coherence', 'diversity', 'perplexity']
         standard_values = [standard_results[m] for m in metrics]
         htransformer_values = [htransformer_results[m] for m in metrics]
@@ -82,7 +90,9 @@ class ResultsVisualizer:
         results: Dict[str, Dict[str, float]],
         save_path: str = None
     ):
-        """Plot the impact of sequence length on model performance."""
+        """
+        Plot the impact of sequence length on model performance for various metrics.
+        """
         seq_lengths = sorted(results.keys())
         metrics = ['retention_100', 'coherence', 'diversity']
         
@@ -113,7 +123,9 @@ class ResultsVisualizer:
         standard_results: Dict[str, float],
         htransformer_results: Dict[str, float]
     ) -> pd.DataFrame:
-        """Create a summary table of all metrics."""
+        """
+        Create a summary table of all metrics for both models.
+        """
         metrics = {
             'Memory Retention (100 steps)': (
                 standard_results['retention_100'],
@@ -153,7 +165,9 @@ class ResultsVisualizer:
         htransformer_attention: torch.Tensor,
         save_path: str = None
     ):
-        """Plot attention patterns for both models."""
+        """
+        Plot attention patterns for both models as heatmaps.
+        """
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
         
         sns.heatmap(
@@ -186,7 +200,9 @@ class ResultsVisualizer:
         htransformer_results: Dict[str, float],
         step: int = None
     ):
-        """Log all metrics to Weights & Biases."""
+        """
+        Log all metrics to Weights & Biases for both models.
+        """
         if not self.use_wandb:
             return
         
@@ -208,8 +224,8 @@ class ResultsVisualizer:
         htransformer_eval_losses: List[float],
         save_path: str = None
     ):
-        """Plot training and evaluation curves for both models.
-        
+        """
+        Plot training and evaluation curves for both models.
         Args:
             standard_train_losses: Training losses for Standard Transformer
             standard_eval_losses: Evaluation losses for Standard Transformer

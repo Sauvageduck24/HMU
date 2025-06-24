@@ -4,7 +4,10 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 class PositionalEncoding(nn.Module):
-    """Sinusoidal positional encoding, batch‑first."""
+    """
+    Implements sinusoidal positional encoding for sequence models.
+    Adds position information to token embeddings.
+    """
     def __init__(self, d_model: int, max_len: int = 10000):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
@@ -30,6 +33,9 @@ class PositionalEncoding(nn.Module):
         return x
 
 class MultiHeadAttention(nn.Module):
+    """
+    Implements multi-head self-attention mechanism.
+    """
     def __init__(self, d_model, nhead, dropout=0.1):
         super().__init__()
         assert d_model % nhead == 0
@@ -46,9 +52,11 @@ class MultiHeadAttention(nn.Module):
         # query/key/value: (B, L, D)
         B, Lq, _ = query.size()
         _, Lk, _ = key.size()
+        # Linear projections and split into heads
         Q = self.q_linear(query).view(B, Lq, self.nhead, self.d_k).transpose(1, 2)
         K = self.k_linear(key).view(B, Lk, self.nhead, self.d_k).transpose(1, 2)
         V = self.v_linear(value).view(B, Lk, self.nhead, self.d_k).transpose(1, 2)
+        # Scaled dot-product attention
         scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
         if mask is not None:
             # mask: (B, 1, 1, Lk) or broadcastable
@@ -60,6 +68,9 @@ class MultiHeadAttention(nn.Module):
         return self.out_proj(context)
 
 class FeedForward(nn.Module):
+    """
+    Position-wise feedforward network used in Transformer blocks.
+    """
     def __init__(self, d_model, dim_feedforward, dropout=0.1, activation="relu"):
         super().__init__()
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -71,6 +82,9 @@ class FeedForward(nn.Module):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
 
 class EncoderLayer(nn.Module):
+    """
+    Single encoder layer: self-attention + feedforward + normalization.
+    """
     def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1, activation="relu"):
         super().__init__()
         self.self_attn = MultiHeadAttention(d_model, nhead, dropout)
@@ -81,13 +95,18 @@ class EncoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, src, src_mask=None):
+        # Self-attention block
         src2 = self.self_attn(src, src, src, src_mask)
         src = self.norm1(src + self.dropout1(src2))
+        # Feedforward block
         src2 = self.ff(src)
         src = self.norm2(src + self.dropout2(src2))
         return src
 
 class DecoderLayer(nn.Module):
+    """
+    Single decoder layer: self-attention, cross-attention, feedforward, normalization.
+    """
     def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1, activation="relu"):
         super().__init__()
         self.self_attn = MultiHeadAttention(d_model, nhead, dropout)
@@ -101,15 +120,21 @@ class DecoderLayer(nn.Module):
         self.dropout3 = nn.Dropout(dropout)
 
     def forward(self, tgt, memory, tgt_mask=None, memory_mask=None):
+        # Self-attention on target
         tgt2 = self.self_attn(tgt, tgt, tgt, tgt_mask)
         tgt = self.norm1(tgt + self.dropout1(tgt2))
+        # Cross-attention with encoder memory
         tgt2 = self.cross_attn(tgt, memory, memory, memory_mask)
         tgt = self.norm2(tgt + self.dropout2(tgt2))
+        # Feedforward
         tgt2 = self.ff(tgt)
         tgt = self.norm3(tgt + self.dropout3(tgt2))
         return tgt
 
 class Encoder(nn.Module):
+    """
+    Stacks multiple encoder layers.
+    """
     def __init__(self, d_model, nhead, num_layers, dim_feedforward, dropout=0.1, activation="relu"):
         super().__init__()
         self.layers = nn.ModuleList([
@@ -126,6 +151,9 @@ class Encoder(nn.Module):
         return self.norm(src)
 
 class Decoder(nn.Module):
+    """
+    Stacks multiple decoder layers.
+    """
     def __init__(self, d_model, nhead, num_layers, dim_feedforward, dropout=0.1, activation="relu"):
         super().__init__()
         self.layers = nn.ModuleList([
@@ -144,7 +172,10 @@ class Decoder(nn.Module):
         return self.norm(tgt)
     
 class StandardTransformer(nn.Module):
-    """Implementation that follows the theoretical pipeline in the pseudocode."""
+    """
+    Standard Transformer model implementation (no memory module).
+    Follows the theoretical pipeline in the pseudocode.
+    """
     def __init__(
         self,
         vocab_size: int = 32000,
@@ -168,23 +199,19 @@ class StandardTransformer(nn.Module):
         self.output_proj = nn.Linear(d_model, vocab_size)
 
     def forward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        # 1) Asegura batch-first
+        # 1) Ensure batch-first
         src = self._ensure_batch_first(src)
         tgt = self._ensure_batch_first(tgt)
-
-        # 2) Embedding solo si son índices
+        # 2) Embedding if input is indices
         src_embed = self._maybe_embed(src)          # (B, L, D)
         tgt_embed = self._maybe_embed(tgt)          # (B, L, D)
-
         # 3) Positional encodings
         src_embed = self.pos_encoder(src_embed)
         tgt_embed = self.pos_decoder(tgt_embed)
-
         # 4) Encoder → Decoder
         memory = self.encoder_layer(src_embed)      # (B, L, D)
         dec_out = self.decoder(tgt_embed, memory)   # (B, L, D)
-
-        # 5) Logits
+        # 5) Output logits
         return self.output_proj(dec_out)            # (B, L, vocab)
 
     def encode(self, src):
@@ -200,7 +227,7 @@ class StandardTransformer(nn.Module):
         return v
 
     def decode(self, tgt, memory):
-        # tgt: (L,) o (B, L) de índices de tokens (LongTensor)
+        # tgt: (L,) or (B, L) of token indices (LongTensor)
         if tgt.dim() == 1:
             tgt = tgt.unsqueeze(0)
         if not torch.is_floating_point(tgt):
@@ -213,17 +240,16 @@ class StandardTransformer(nn.Module):
         dec_out = self.decoder(tgt_embed, memory)
         return self.output_proj(dec_out)
     
-        # ─── utilidades internas ─────────────────────────────────────────────
+    # Internal utilities
     def _ensure_batch_first(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Garantiza que x tenga forma (B, L) [long] o (B, L, D) [float].
+        Ensures x has shape (B, L) [long] or (B, L, D) [float].
         - (L,)    → (1, L)
         """
         return x.unsqueeze(0) if x.dim() == 1 else x
 
     def _maybe_embed(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Si x es Long → aplica embedding;  
-        Si x es float (ya embeddeado) → se devuelve tal cual.
+        If x is Long → applies embedding;  If x is float (already embedded) → returns as is.
         """
         return self.embedding(x) if x.dtype == torch.long else x

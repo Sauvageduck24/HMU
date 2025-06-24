@@ -13,7 +13,7 @@ import pandas as pd
 from torch import nn
 
 from src.models.transformer import StandardTransformer
-from src.models.htransformer import HMUTransformer, HMUTransformerAfterDecoder  # Mantengo una sola variante para claridad
+from src.models.htransformer import HMUTransformer, HMUTransformerAfterDecoder  # Only one variant for clarity
 from src.evaluation.metrics import TransformerEvaluator
 from src.evaluation.visualization import ResultsVisualizer
 from src.data.data_generator import DataGenerator
@@ -27,7 +27,7 @@ from src.data.glue_loader import GLUELoader
 # Utils
 # ------------------------------
 
-PAD_ID = 0  # Asumimos que 0 es el token <pad> en el DataGenerator
+PAD_ID = 0  # Assume 0 is the <pad> token in DataGenerator
 
 def set_seed(seed: int):
     """Set random seed for reproducibility on CPU & GPU."""
@@ -63,7 +63,10 @@ def train_model(
     eval_every: int = 1,
     grad_accum_steps: int = 1,
 ) -> Tuple[torch.nn.Module, List[float], List[float], List[float], List[float], float]:
-    """Train with mixed precision + scheduler. Returns model, train_losses, eval_losses, train_accs, eval_accs, train_time."""
+    """
+    Train a model with mixed precision and learning rate scheduler.
+    Returns model, train_losses, eval_losses, train_accs, eval_accs, train_time.
+    """
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_ID)
@@ -149,9 +152,12 @@ def test_models(
     eval_batch_size: int = 8,
     dataset_type: str = "synthetic"
 ):
+    """
+    Evaluate both standard and HMU transformer models on the test set.
+    Returns results for each model.
+    """
     evaluator = TransformerEvaluator()
-
-    # Recolectamos tensores para el evaluador
+    # Collect tensors for the evaluator
     all_src = []
     all_tgt = []
     for batch in test_loader:
@@ -159,9 +165,8 @@ def test_models(
         all_tgt.append(batch["tgt"].cpu())
     all_src = torch.cat(all_src, dim=0)
     all_tgt = torch.cat(all_tgt, dim=0)
-
     if dataset_type != "synthetic":
-        # Evaluación normal: accuracy y loss
+        # Standard evaluation: accuracy and loss
         std_results = hmu_results = None
         criterion = torch.nn.CrossEntropyLoss()
         total = 0

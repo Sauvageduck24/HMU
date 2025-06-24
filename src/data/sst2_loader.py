@@ -28,16 +28,16 @@ class SST2Loader:
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.tokenizer.pad_token = self.tokenizer.eos_token  # Ensure pad token exists
         
         # Load data
         self.data = self._load_sst2_data()
         
     def _download_sst2(self, data_dir: str = "data/sst2") -> str:
         """Download SST-2 dataset if not already present."""
-        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)  # Create directory if needed
         
-        # URLs for SST-2
+        # URLs for SST-2 (all splits in same zip)
         urls = {
             "train": "https://dl.fbaipublicfiles.com/glue/data/SST-2.zip",
             "dev": "https://dl.fbaipublicfiles.com/glue/data/SST-2.zip",
@@ -52,6 +52,7 @@ class SST2Loader:
             response = requests.get(urls["train"], stream=True)
             total_size = int(response.headers.get('content-length', 0))
             
+            # Download with progress bar
             with open(zip_path, 'wb') as f:
                 with tqdm(total=total_size, unit='B', unit_scale=True) as pbar:
                     for chunk in response.iter_content(chunk_size=8192):
@@ -67,9 +68,9 @@ class SST2Loader:
     
     def _load_sst2_data(self) -> List[Dict[str, torch.Tensor]]:
         """Load SST-2 data and convert to tensor format."""
-        data_dir = self._download_sst2()
+        data_dir = self._download_sst2()  # Ensure data is downloaded
         
-        # File paths
+        # File paths for each split
         if self.split == "train":
             file_path = os.path.join(data_dir, "train.tsv")
         elif self.split == "validation":
@@ -77,7 +78,7 @@ class SST2Loader:
         else:  # test
             file_path = os.path.join(data_dir, "test.tsv")
         
-        # Read TSV file
+        # Read TSV file into DataFrame
         df = pd.read_csv(file_path, sep='\t')
         
         # For test set, labels might not be available
@@ -89,10 +90,10 @@ class SST2Loader:
         print(f"Processing {self.split} split with {len(df)} samples...")
         
         for idx, row in tqdm(df.iterrows(), total=len(df)):
-            sentence = row['sentence']
-            label = row['label']
+            sentence = row['sentence']  # Extract sentence
+            label = row['label']        # Extract label (0 or 1)
             
-            # Tokenize
+            # Tokenize sentence with padding and truncation
             encoding = self.tokenizer(
                 sentence,
                 truncation=True,
@@ -101,10 +102,10 @@ class SST2Loader:
                 return_tensors='pt'
             )
             
-            # Create sample
+            # Create sample dictionary with input and label tensors
             sample = {
-                'src': encoding['input_ids'].squeeze(0),
-                'tgt': torch.tensor(label, dtype=torch.long)
+                'src': encoding['input_ids'].squeeze(0),  # Input tensor
+                'tgt': torch.tensor(label, dtype=torch.long)  # Target label tensor
             }
             data.append(sample)
         
