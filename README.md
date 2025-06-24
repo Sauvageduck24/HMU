@@ -1,8 +1,8 @@
 # Hyper-Memory Unit Transformers: Research Framework
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15715861.svg)](https://doi.org/10.5281/zenodo.15715861)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.15715904.svg)](https://doi.org/10.5281/zenodo.15715904)
 
-> **Find the official dataset and paper on Zenodo:** [https://zenodo.org/records/15715861](https://zenodo.org/records/15715861)
+> **Find the official dataset and paper on Zenodo:** [https://zenodo.org/records/15715861](https://zenodo.org/records/15715904)
 
 This repository provides a robust framework for benchmarking **standard Transformers** and **Hyper-Memory Unit Transformers (HTransformers)** in tasks involving long-term memory and imagination. The codebase is designed to support reproducible research, as presented in our paper:
 
